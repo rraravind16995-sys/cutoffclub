@@ -20,7 +20,16 @@ const indiaMinistries: string[] = [
  "Ministry of Skill Development and Entrepreneurship", "Ministry of Fisheries, Animal Husbandry and Dairying",
  "Ministry of Tourism", "Ministry of Commerce and Industry",
  "Ministry of Road Transport and Highways", "Ministry of Petroleum and Natural Gas",
- "Ministry of Defence"
+ "Ministry of Defence", "Ministry of Home Affairs", "Ministry of External Affairs",
+ "Ministry of Ayush", "Ministry of Information and Broadcasting", "Ministry of Culture",
+ "Ministry of Law and Justice", "Ministry of Parliamentary Affairs", "Ministry of Corporate Affairs",
+ "Ministry of Communications", "Ministry of Railways", "Ministry of Civil Aviation",
+ "Ministry of Ports, Shipping and Waterways", "Ministry of Coal", "Ministry of Mines",
+ "Ministry of Steel", "Ministry of Textiles", "Ministry of Chemicals and Fertilizers",
+ "Ministry of Heavy Industries", "Ministry of New and Renewable Energy", "Ministry of Earth Sciences",
+ "Ministry of Science and Technology", "Ministry of Cooperation", "Ministry of Minority Affairs",
+ "Ministry of Panchayati Raj", "Ministry of Statistics and Programme Implementation",
+ "Ministry of Development of North Eastern Region", "Ministry of Personnel, Public Grievances and Pensions"
 ];
 const tamilNaduDepartments: string[] = [
  "Social Welfare and Women Empowerment Department", "School Education Department",
@@ -38,9 +47,13 @@ const tamilNaduDepartments: string[] = [
  "Transport Department", "Tourism, Culture and Religious Endowments Department"
 ];
 
+function isPibAffair(a: Affair): boolean {
+ return (a.source_name||"").toLowerCase().includes("pib")||(a.source_url||"").toLowerCase().includes("pib.gov.in");
+}
+
 export default function HomePage(){
  const db=useMemo(()=>{const u=process.env.NEXT_PUBLIC_SUPABASE_URL,k=process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY||process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;return u&&k?createClient(u,k):null},[]);
- const [user,setUser]=useState<User|null>(null),[subjects,setSubjects]=useState(fallback),[affairs,setAffairs]=useState<Affair[]>([]),[affairFilter,setAffairFilter]=useState("all"),[schemeJurisdiction,setSchemeJurisdiction]=useState("all"),[schemeMinistry,setSchemeMinistry]=useState("all"),[mcqs,setMcqs]=useState<Mcq[]>([]),[mains,setMains]=useState<Mains[]>([]),[loading,setLoading]=useState(true),[mobile,setMobile]=useState(false),[mode,setMode]=useState<"signin"|"signup">("signin"),[email,setEmail]=useState(""),[password,setPassword]=useState(""),[message,setMessage]=useState(""),[canResend,setCanResend]=useState(false),[choice,setChoice]=useState<Record<string,number>>({}),[show,setShow]=useState<Record<string,boolean>>({});
+ const [user,setUser]=useState<User|null>(null),[subjects,setSubjects]=useState(fallback),[affairs,setAffairs]=useState<Affair[]>([]),[affairFilter,setAffairFilter]=useState("all"),[pibMinistry,setPibMinistry]=useState("all"),[schemeJurisdiction,setSchemeJurisdiction]=useState("all"),[schemeMinistry,setSchemeMinistry]=useState("all"),[mcqs,setMcqs]=useState<Mcq[]>([]),[mains,setMains]=useState<Mains[]>([]),[loading,setLoading]=useState(true),[mobile,setMobile]=useState(false),[mode,setMode]=useState<"signin"|"signup">("signin"),[email,setEmail]=useState(""),[password,setPassword]=useState(""),[message,setMessage]=useState(""),[canResend,setCanResend]=useState(false),[choice,setChoice]=useState<Record<string,number>>({}),[show,setShow]=useState<Record<string,boolean>>({});
  useEffect(()=>{if(!db){setLoading(false);return}let live=true;void db.auth.getUser().then(({data})=>{if(live)setUser(data.user)});const {data:sub}=db.auth.onAuthStateChange((_e,s)=>{setUser(s?.user??null);if(_e==="SIGNED_IN")setMessage("Signed in successfully. Your account is ready.")});void Promise.all([db.from("subjects").select("id,name,slug,description,gs_papers").order("sort_order"),db.from("current_affairs").select("id,title,summary,source_url,source_name,published_on,gs_paper,subject_id,content_type,scheme_jurisdiction,ministry,subjects(name,slug)").eq("status","published").order("published_on",{ascending:false}).limit(100),db.from("mcq_questions").select("id,topic,question,options,explanation,source_url,source_label,subjects(name)").eq("status","published").limit(5),db.from("mains_questions").select("id,question,year,question_type,gs_paper,marks,word_limit,source_url,source_label,model_answers(introduction,body,conclusion,examples)").eq("status","published").order("created_at",{ascending:false}).limit(5)]).then(([s,a,q,m])=>{if(!live)return;if(s.data?.length)setSubjects(s.data as Subject[]);if(a.data)setAffairs(a.data as Affair[]);if(q.data)setMcqs(q.data as unknown as Mcq[]);if(m.data)setMains(m.data as unknown as Mains[]);setLoading(false)});return()=>{live=false;sub.subscription.unsubscribe()}},[db]);
  useEffect(()=>{const params=new URLSearchParams(window.location.hash.slice(1));const description=params.get("error_description");if(description){setMessage(description);window.history.replaceState({},document.title,window.location.pathname+window.location.search)}},[]);
  function authRedirectUrl(){return process.env.NEXT_PUBLIC_SITE_URL||window.location.origin}
@@ -67,8 +80,9 @@ export default function HomePage(){
  }
  async function signOut(){if(db)await db.auth.signOut();setUser(null)}
  const admin=user?.app_metadata?.role==="admin";
+ const pibMinistries=useMemo(()=>Array.from(new Set([...indiaMinistries,...affairs.filter(a=>isPibAffair(a)&&a.ministry).map(a=>a.ministry as string)])).sort((a,b)=>a.localeCompare(b)),[affairs]);
  const filteredAffairs=useMemo(()=>affairs.filter(a=>{
-  if(affairFilter==="pib")return (a.source_name||"").toLowerCase().includes("pib")||(a.source_url||"").toLowerCase().includes("pib.gov.in");
+  if(affairFilter==="pib")return isPibAffair(a)&&(pibMinistry==="all"||a.ministry===pibMinistry);
   if(affairFilter==="schemes"){
    if(a.content_type!=="scheme")return false;
    if(schemeJurisdiction!=="all"&&a.scheme_jurisdiction!==schemeJurisdiction)return false;
@@ -76,7 +90,7 @@ export default function HomePage(){
    return true;
   }
   return affairFilter==="all"||a.subject_id===affairFilter||a.subjects?.[0]?.slug===affairFilter;
- }),[affairs,affairFilter,schemeJurisdiction,schemeMinistry]);
+ }),[affairs,affairFilter,pibMinistry,schemeJurisdiction,schemeMinistry]);
  const empty=(title:string,desc:string)=><div className="rounded-2xl border border-dashed border-slate-300 bg-white p-7"><h3 className="font-extrabold text-[#0b1d3a]">{title}</h3><p className="mt-2 text-sm leading-6 text-slate-500">{desc}</p></div>;
  return <main className="min-h-screen bg-slate-50 text-slate-800">
  <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur"><div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 sm:px-6"><a href="#home" className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl bg-[#0b1d3a] text-white"><BookOpen size={21}/></span><span><strong className="block text-lg font-black text-[#0b1d3a]">CutoffClub</strong><small className="block text-[10px] font-bold uppercase tracking-[.18em] text-slate-500">Prepare with purpose</small></span></a><nav className="hidden gap-1 lg:flex">{[["#affairs","Current affairs"],["#prelims","Prelims MCQs"],["#mains","Mains practice"],["#subjects","Subjects"],["#account","Account"]].map(([h,l])=><a key={h} href={h} className="rounded-lg px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100">{l}</a>)}</nav><div className="flex items-center gap-2">{user?<><span className="hidden max-w-36 truncate text-xs text-slate-500 sm:inline">{user.email}</span><button className="rounded-lg border px-3 py-2 text-xs font-bold" onClick={()=>void signOut()}>Sign out</button></>:<a href="#account" className="hidden rounded-lg bg-[#0b1d3a] px-4 py-2 text-sm font-bold text-white sm:inline-flex"><LogIn size={14} className="mr-2"/>Sign in</a>}<button className="rounded-lg border p-2 lg:hidden" onClick={()=>setMobile(v=>!v)} aria-label="Toggle navigation">{mobile?<X size={18}/>:<Menu size={18}/>}</button></div></div>{mobile&&<nav className="grid gap-1 border-t p-3 lg:hidden">{[["#affairs","Current affairs"],["#prelims","Prelims MCQs"],["#mains","Mains practice"],["#subjects","Subjects"],["#account","Account"]].map(([h,l])=><a key={h} href={h} onClick={()=>setMobile(false)} className="rounded-lg px-3 py-2 text-sm font-semibold">{l}</a>)}</nav>}</header>
@@ -88,14 +102,22 @@ export default function HomePage(){
   <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
     <label htmlFor="affair-subject-filter" className="block text-xs font-extrabold uppercase tracking-wide text-slate-600">Subject-wise
-     <select id="affair-subject-filter" value={affairFilter} onChange={e=>{setAffairFilter(e.target.value);setSchemeJurisdiction("india");setSchemeMinistry("all")}} className="mt-2 block w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-semibold normal-case tracking-normal text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100">
+     <select id="affair-subject-filter" value={affairFilter} onChange={e=>{setAffairFilter(e.target.value);setPibMinistry("all");setSchemeJurisdiction("india");setSchemeMinistry("all")}} className="mt-2 block w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-semibold normal-case tracking-normal text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100">
       <option value="all">All current affairs</option>
       {subjects.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
       <option value="pib">PIB (Press Information Bureau)</option>
       <option value="schemes">Schemes</option>
      </select>
     </label>
-    {affairFilter==="schemes"?<>
+    {affairFilter==="pib"?<>
+     <label htmlFor="pib-ministry-filter" className="block text-xs font-extrabold uppercase tracking-wide text-slate-600">PIB Ministry
+      <select id="pib-ministry-filter" value={pibMinistry} onChange={e=>setPibMinistry(e.target.value)} className="mt-2 block w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-semibold normal-case tracking-normal text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100">
+       <option value="all">All PIB ministries</option>
+       {pibMinistries.map(name=><option key={name} value={name}>{name}</option>)}
+      </select>
+     </label>
+     <div className="flex items-center rounded-xl bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600">Filter Press Information Bureau releases by the ministry or department associated with each published item.</div>
+    </>:affairFilter==="schemes"?<>
      <label htmlFor="scheme-jurisdiction-filter" className="block text-xs font-extrabold uppercase tracking-wide text-slate-600">Government
       <select id="scheme-jurisdiction-filter" value={schemeJurisdiction} onChange={e=>{setSchemeJurisdiction(e.target.value);setSchemeMinistry("all")}} className="mt-2 block w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-semibold normal-case tracking-normal text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100">
        <option value="india">India</option>
@@ -115,7 +137,7 @@ export default function HomePage(){
    <div className="flex flex-wrap gap-2 text-[10px] font-extrabold uppercase text-amber-800">
     <span className="rounded bg-amber-50 px-2 py-1">{a.gs_paper||"Current affairs"}</span>
     <span className="rounded bg-blue-50 px-2 py-1 text-blue-800">{a.content_type==="scheme"?"Schemes":a.subjects?.[0]?.name||"Current affairs"}</span>
-    {a.content_type==="scheme"&&<span className="rounded bg-violet-50 px-2 py-1 text-violet-800">{a.scheme_jurisdiction==="india"?"India":"Tamil Nadu"}{a.ministry ? " · " + a.ministry : ""}</span>}
+    {a.ministry&&<span className="rounded bg-violet-50 px-2 py-1 text-violet-800">{a.content_type==="scheme"?(a.scheme_jurisdiction==="india"?"India · ":"Tamil Nadu · "):""}{a.ministry}</span>}
     <span className="rounded bg-slate-100 px-2 py-1">{a.published_on}</span>
    </div>
    <h3 className="mt-4 text-lg font-extrabold text-[#0b1d3a]">{a.title}</h3>
