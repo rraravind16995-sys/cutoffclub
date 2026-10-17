@@ -37,3 +37,13 @@ The intended production URL is https://cutoffclub.vercel.app, with `main` as the
 Configure Supabase Auth site and redirect URLs for the production domain. Grant admin access only through a trusted server-side workflow setting `app_metadata.role = "admin"`; never trust client-editable metadata. Test auth flows, RLS data isolation, quiz scoring, admin permissions and mobile accessibility before inviting learners.
 
 Run `npm run build` and `npm run typecheck` before production changes.
+
+
+## Email sign-up and verification
+The production app uses `NEXT_PUBLIC_SITE_URL=https://cutoffclub.vercel.app` for Supabase confirmation links. In the Supabase dashboard for project `xhqvtyxrtqvqckqtzlll`:
+
+1. In Authentication → Sign In / Providers, enable new user sign-ups and turn on Confirm Email for the Email provider.
+2. In Authentication → URL Configuration, set the Site URL to `https://cutoffclub.vercel.app` and add `https://cutoffclub.vercel.app/**` to Redirect URLs.
+3. Configure Custom SMTP in Authentication settings before inviting general users. Supabase's default sender is restricted to addresses belonging to the project's organization and is rate-limited; without custom SMTP, confirmation emails may not reach learners.
+
+The app shows a confirmation reminder after signup, supports resending the confirmation message, reports auth-link errors, and redirects signup confirmation to the canonical production URL. Never commit SMTP credentials or Supabase secret/service-role keys.
