@@ -1,6 +1,6 @@
 "use client";
 import {useEffect,useMemo,useState} from "react";
-import {createClient,type User} from "@supabase/supabase-js";
+import {createClient,type User,type SupabaseClient} from "@supabase/supabase-js";
 import {ArrowRight,BookOpen,CheckCircle2,Compass,FileText,GraduationCap,LogIn,Menu,ShieldCheck,Sparkles,X} from "lucide-react";
 type Subject={id:string;name:string;slug:string;description:string|null;gs_papers:string[]};
 type Affair={id:string;title:string;summary:string;source_url:string;source_name:string;published_on:string;gs_paper:string|null;subject_id:string|null;subjects?:{name:string;slug:string}[]|null;content_type:"current_affair"|"scheme";scheme_jurisdiction:"india"|"tamil_nadu"|null;ministry:string|null};
@@ -51,6 +51,179 @@ function isPibAffair(a: Affair): boolean {
  return (a.source_name||"").toLowerCase().includes("pib")||(a.source_url||"").toLowerCase().includes("pib.gov.in");
 }
 
+
+type AdminKind = "affair" | "pib" | "scheme" | "mcq" | "mains";
+type AdminContentManagerProps = { db: SupabaseClient; user: User; subjects: Subject[]; onSaved: () => Promise<void> };
+const adminInput = "mt-1 block w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100";
+const adminArea = adminInput + " min-h-24";
+function localDateValue() {
+ const d = new Date();
+ return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+}
+function makeContentSlug(raw: string) {
+ return raw.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 150);
+}
+function AdminContentManager({db,user,subjects,onSaved}: AdminContentManagerProps) {
+ const [kind,setKind] = useState<AdminKind>("affair");
+ const [contentStatus,setContentStatus] = useState<"draft"|"published">("draft");
+ const [saving,setSaving] = useState(false);
+ const [notice,setNotice] = useState<{kind:"success"|"error";text:string}|null>(null);
+ const [story,setStory] = useState({title:"",slug:"",summary:"",background:"",keyFacts:"",examRelevance:"",gsPaper:"",sourceUrl:"",sourceName:"PIB",publishedOn:localDateValue(),subjectId:"",jurisdiction:"india",ministry:""});
+ const [mcq,setMcq] = useState({topic:"",question:"",options:"",correctOption:"0",explanation:"",sourceUrl:"",sourceLabel:"",subjectId:""});
+ const [mains,setMains] = useState({question:"",questionType:"practice" as "pyq"|"practice",year:"",gsPaper:"GS II",marks:"10",wordLimit:"150",instruction:"",sourceUrl:"",sourceLabel:"",subjectId:"",introduction:"",body:"",examples:"",conclusion:""});
+ const parsedOptions = mcq.options.split(/\r?\n/).map(v=>v.trim()).filter(Boolean);
+ const ministryOptions = kind==="scheme" && story.jurisdiction==="tamil_nadu" ? tamilNaduDepartments : indiaMinistries;
+ async function saveContent(e: React.FormEvent<HTMLFormElement>) {
+  e.preventDefault();
+  setSaving(true);
+  setNotice(null);
+  try {
+   if (kind==="affair" || kind==="pib" || kind==="scheme") {
+    const title=story.title.trim();
+    const summary=story.summary.trim();
+    const slug=makeContentSlug(story.slug.trim() || title);
+    if (title.length<8) throw new Error("Title must contain at least 8 characters.");
+    if (summary.length<20) throw new Error("Summary must contain at least 20 characters.");
+    if (!slug) throw new Error("Please provide a title that can be converted to a URL slug.");
+    if (!/^https:\/\/.+/i.test(story.sourceUrl.trim())) throw new Error("Source URL must start with https://.");
+    if ((kind==="pib" || kind==="scheme") && !story.ministry) throw new Error("Choose the ministry or department for this item.");
+    if (kind==="scheme" && !story.jurisdiction) throw new Error("Choose India or Tamil Nadu for this scheme.");
+    const result=await db.from("current_affairs").insert({
+     slug,title,summary,background:story.background.trim()||null,
+     key_facts:story.keyFacts.split(/\r?\n/).map(v=>v.trim()).filter(Boolean),
+     exam_relevance:story.examRelevance.trim()||null,gs_paper:story.gsPaper||null,
+     source_url:story.sourceUrl.trim(),source_name:kind==="pib"?"PIB":story.sourceName.trim(),
+     published_on:story.publishedOn||localDateValue(),subject_id:story.subjectId||null,
+     status:contentStatus,publish_at:null,created_by:user.id,
+     content_type:kind==="scheme"?"scheme":"current_affair",
+     scheme_jurisdiction:kind==="scheme"?story.jurisdiction:null,
+     ministry:(kind==="scheme"||kind==="pib")?story.ministry:null
+    });
+    if(result.error) throw new Error(result.error.message);
+    await onSaved();
+    setStory(v=>({...v,title:"",slug:"",summary:"",background:"",keyFacts:"",examRelevance:"",sourceUrl:"",ministry:""}));
+    setNotice({kind:"success",text:contentStatus==="published"?"Content published successfully.":"Draft saved successfully."});
+   } else if (kind==="mcq") {
+    const options=parsedOptions;
+    if(options.length<2 || options.length>6) throw new Error("Add between 2 and 6 options, one per line.");
+    if(!mcq.topic.trim()) throw new Error("Enter a topic for this MCQ.");
+    if(!mcq.question.trim() || mcq.question.trim().length<10) throw new Error("Question must contain at least 10 characters.");
+    if(!mcq.explanation.trim() || mcq.explanation.trim().length<10) throw new Error("Add an explanation of at least 10 characters.");
+    if(Number(mcq.correctOption)<0 || Number(mcq.correctOption)>=options.length) throw new Error("Choose the correct option.");
+    if(mcq.sourceUrl.trim() && !/^https:\/\/.+/i.test(mcq.sourceUrl.trim())) throw new Error("Source URL must start with https://.");
+    const created=await db.from("mcq_questions").insert({
+     topic:mcq.topic.trim(),question:mcq.question.trim(),options,explanation:mcq.explanation.trim(),
+     subject_id:mcq.subjectId||null,source_url:mcq.sourceUrl.trim()||null,source_label:mcq.sourceLabel.trim()||null,
+     status:"draft",publish_at:null,created_by:user.id
+    }).select("id").single();
+    if(created.error || !created.data?.id) throw new Error(created.error?.message||"Could not create the MCQ.");
+    const key=await db.from("mcq_answer_keys").insert({question_id:created.data.id,correct_option_index:Number(mcq.correctOption),created_by:user.id});
+    if(key.error) {
+     await db.from("mcq_questions").delete().eq("id",created.data.id);
+     throw new Error("Could not save the protected answer key: "+key.error.message);
+    }
+    const published=await db.from("mcq_questions").update({status:contentStatus}).eq("id",created.data.id);
+    if(published.error) throw new Error(published.error.message);
+    await onSaved();
+    setMcq(v=>({...v,question:"",options:"",correctOption:"0",explanation:"",sourceUrl:"",sourceLabel:""}));
+    setNotice({kind:"success",text:contentStatus==="published"?"MCQ and answer key saved; the question is published.":"MCQ draft and protected answer key saved."});
+   } else {
+    const q=mains.question.trim();
+    if(q.length<10) throw new Error("Mains question must contain at least 10 characters.");
+    if(mains.questionType==="pyq" && !mains.year) throw new Error("Enter the year for this previous-year question.");
+    if(mains.sourceUrl.trim() && !/^https:\/\/.+/i.test(mains.sourceUrl.trim())) throw new Error("Source URL must start with https://.");
+    const hasAnswer=Boolean(mains.introduction.trim()||mains.body.trim()||mains.examples.trim()||mains.conclusion.trim());
+    if(hasAnswer && (!mains.introduction.trim()||!mains.body.trim()||!mains.conclusion.trim())) throw new Error("For a model answer, provide the introduction, body and conclusion. Examples are optional.");
+    const created=await db.from("mains_questions").insert({
+     question:q,question_type:mains.questionType,year:mains.year?Number(mains.year):null,
+     gs_paper:mains.gsPaper,marks:mains.marks?Number(mains.marks):null,
+     word_limit:mains.wordLimit?Number(mains.wordLimit):null,subject_id:mains.subjectId||null,
+     source_url:mains.sourceUrl.trim()||null,source_label:mains.sourceLabel.trim()||null,
+     instruction:mains.instruction.trim()||null,status:"draft",publish_at:null,created_by:user.id
+    }).select("id").single();
+    if(created.error || !created.data?.id) throw new Error(created.error?.message||"Could not create the Mains question.");
+    if(hasAnswer) {
+     const answer=await db.from("model_answers").insert({
+      mains_question_id:created.data.id,introduction:mains.introduction.trim(),body:mains.body.trim(),
+      examples:mains.examples.split(/\r?\n/).map(v=>v.trim()).filter(Boolean),
+      conclusion:mains.conclusion.trim(),source_links:[],status:contentStatus,created_by:user.id
+     });
+     if(answer.error) {
+      await db.from("mains_questions").delete().eq("id",created.data.id);
+      throw new Error("Could not save the model answer: "+answer.error.message);
+     }
+    }
+    const published=await db.from("mains_questions").update({status:contentStatus}).eq("id",created.data.id);
+    if(published.error) throw new Error(published.error.message);
+    await onSaved();
+    setMains(v=>({...v,question:"",year:"",instruction:"",sourceUrl:"",sourceLabel:"",introduction:"",body:"",examples:"",conclusion:""}));
+    setNotice({kind:"success",text:contentStatus==="published"?"Mains question and model answer saved and published.":"Mains question draft saved."});
+   }
+  } catch(err) {
+   setNotice({kind:"error",text:err instanceof Error?err.message:"Unable to save content. Please try again."});
+  } finally {
+   setSaving(false);
+  }
+ }
+ const tabs:[AdminKind,string][]=[["affair","Current affair"],["pib","PIB release"],["scheme","Government scheme"],["mcq","Prelims MCQ"],["mains","Mains + model answer"]];
+ return <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+  <div className="flex flex-wrap gap-2">{tabs.map(([value,label])=><button key={value} type="button" onClick={()=>{setKind(value);setNotice(null);if(value==="pib")setStory(v=>({...v,sourceName:"PIB"}));}} className={"rounded-xl px-3 py-2 text-sm font-bold "+(kind===value?"bg-[#0b1d3a] text-white":"border border-slate-200 bg-white text-slate-700 hover:bg-slate-50")}>{label}</button>)}</div>
+  <div className="mt-5 grid gap-3 sm:grid-cols-[1fr_240px] sm:items-end">
+   <div><label className="block text-sm font-bold text-slate-700">Content status<select className={adminInput} value={contentStatus} onChange={e=>setContentStatus(e.target.value as "draft"|"published")}><option value="draft">Save as draft</option><option value="published">Publish immediately</option></select></label></div>
+   <p className="text-xs leading-5 text-slate-500">Drafts stay off the public site. Published items appear on the site after saving.</p>
+  </div>
+  {(kind==="affair"||kind==="pib"||kind==="scheme")&&<form onSubmit={saveContent} className="mt-5 space-y-4">
+   <div className="grid gap-4 md:grid-cols-2">
+    <label className="block text-sm font-bold text-slate-700">Title<input required minLength={8} maxLength={240} className={adminInput} value={story.title} onChange={e=>setStory(v=>({...v,title:e.target.value}))} placeholder="A clear, exam-oriented headline"/></label>
+    <label className="block text-sm font-bold text-slate-700">URL slug <span className="font-normal text-slate-400">(auto-generated if blank)</span><input className={adminInput} value={story.slug} onChange={e=>setStory(v=>({...v,slug:e.target.value}))} placeholder={makeContentSlug(story.title)||"article-title-slug"}/></label>
+   </div>
+   <label className="block text-sm font-bold text-slate-700">Summary<textarea required minLength={20} maxLength={2000} rows={3} className={adminArea} value={story.summary} onChange={e=>setStory(v=>({...v,summary:e.target.value}))} placeholder="Explain the news and why it matters for the exam."/></label>
+   <div className="grid gap-4 md:grid-cols-2">
+    <label className="block text-sm font-bold text-slate-700">Subject<select className={adminInput} value={story.subjectId} onChange={e=>setStory(v=>({...v,subjectId:e.target.value}))}><option value="">Select a subject (optional)</option>{subjects.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
+    <label className="block text-sm font-bold text-slate-700">GS paper<select className={adminInput} value={story.gsPaper} onChange={e=>setStory(v=>({...v,gsPaper:e.target.value}))}><option value="">Not specified</option>{["GS I","GS II","GS III","GS IV","Essay","Other"].map(v=><option key={v} value={v}>{v}</option>)}</select></label>
+   </div>
+   {kind==="scheme"&&<div className="grid gap-4 md:grid-cols-2"><label className="block text-sm font-bold text-slate-700">Government<select required className={adminInput} value={story.jurisdiction} onChange={e=>setStory(v=>({...v,jurisdiction:e.target.value,ministry:""}))}><option value="india">India</option><option value="tamil_nadu">Tamil Nadu</option></select></label><label className="block text-sm font-bold text-slate-700">Ministry / Department<select required className={adminInput} value={story.ministry} onChange={e=>setStory(v=>({...v,ministry:e.target.value}))}><option value="">Choose ministry / department</option>{ministryOptions.map(v=><option key={v} value={v}>{v}</option>)}</select></label></div>}
+   {kind==="pib"&&<label className="block text-sm font-bold text-slate-700">PIB Ministry<select required className={adminInput} value={story.ministry} onChange={e=>setStory(v=>({...v,ministry:e.target.value}))}><option value="">Choose the ministry issuing this PIB release</option>{indiaMinistries.map(v=><option key={v} value={v}>{v}</option>)}</select></label>}
+   <div className="grid gap-4 md:grid-cols-2">
+    <label className="block text-sm font-bold text-slate-700">Source URL<input required type="url" className={adminInput} value={story.sourceUrl} onChange={e=>setStory(v=>({...v,sourceUrl:e.target.value}))} placeholder="https://..."/></label>
+    {kind!=="pib"&&<label className="block text-sm font-bold text-slate-700">Source name<input required className={adminInput} value={story.sourceName} onChange={e=>setStory(v=>({...v,sourceName:e.target.value}))} placeholder="PIB, The Hindu, official ministry..."/></label>}
+    <label className="block text-sm font-bold text-slate-700">Published date<input required type="date" className={adminInput} value={story.publishedOn} onChange={e=>setStory(v=>({...v,publishedOn:e.target.value}))}/></label>
+   </div>
+   <label className="block text-sm font-bold text-slate-700">Background / context <textarea rows={3} className={adminArea} value={story.background} onChange={e=>setStory(v=>({...v,background:e.target.value}))} placeholder="Static concepts or background for the news (optional)"/></label>
+   <label className="block text-sm font-bold text-slate-700">Key facts <span className="font-normal text-slate-400">(one per line)</span><textarea rows={4} className={adminArea} value={story.keyFacts} onChange={e=>setStory(v=>({...v,keyFacts:e.target.value}))} placeholder={"Important fact 1\nImportant fact 2\nImportant fact 3"}/></label>
+   <label className="block text-sm font-bold text-slate-700">Exam relevance<textarea rows={2} className={adminArea} value={story.examRelevance} onChange={e=>setStory(v=>({...v,examRelevance:e.target.value}))} placeholder="Prelims facts, Mains dimensions, related syllabus topic…"/></label>
+   <button disabled={saving} className="rounded-xl bg-amber-400 px-5 py-3 text-sm font-extrabold text-slate-900 disabled:opacity-50">{saving?"Saving…":"Save "+(contentStatus==="published"?"and publish":"draft")}</button>
+  </form>}
+  {kind==="mcq"&&<form onSubmit={saveContent} className="mt-5 space-y-4">
+   <div className="grid gap-4 md:grid-cols-2"><label className="block text-sm font-bold text-slate-700">Topic<input required className={adminInput} value={mcq.topic} onChange={e=>setMcq(v=>({...v,topic:e.target.value}))} placeholder="e.g. Indian Economy"/></label><label className="block text-sm font-bold text-slate-700">Subject<select className={adminInput} value={mcq.subjectId} onChange={e=>setMcq(v=>({...v,subjectId:e.target.value}))}><option value="">Select subject (optional)</option>{subjects.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select></label></div>
+   <label className="block text-sm font-bold text-slate-700">Question<textarea required minLength={10} maxLength={1600} rows={3} className={adminArea} value={mcq.question} onChange={e=>setMcq(v=>({...v,question:e.target.value}))}/></label>
+   <label className="block text-sm font-bold text-slate-700">Options <span className="font-normal text-slate-400">(2–6 options, one per line)</span><textarea required rows={4} className={adminArea} value={mcq.options} onChange={e=>{const newOptions=e.target.value;const n=newOptions.split(/\r?\n/).map(v=>v.trim()).filter(Boolean).length;setMcq(v=>({...v,options:newOptions,correctOption:Number(v.correctOption)>=n?"0":v.correctOption}))}} placeholder={"Option A\nOption B\nOption C\nOption D"}/></label>
+   <div className="grid gap-4 md:grid-cols-2"><label className="block text-sm font-bold text-slate-700">Correct answer<select required className={adminInput} value={mcq.correctOption} onChange={e=>setMcq(v=>({...v,correctOption:e.target.value}))} disabled={!parsedOptions.length}>{parsedOptions.map((v,i)=><option key={i} value={String(i)}>{String.fromCharCode(65+i)+". "+v}</option>)}</select><span className="mt-1 block text-xs font-normal text-slate-500">The correct answer is stored separately and is not shown to learners.</span></label><label className="block text-sm font-bold text-slate-700">Source URL (optional)<input type="url" className={adminInput} value={mcq.sourceUrl} onChange={e=>setMcq(v=>({...v,sourceUrl:e.target.value}))} placeholder="https://..."/></label></div>
+   <label className="block text-sm font-bold text-slate-700">Explanation<textarea required minLength={10} rows={3} className={adminArea} value={mcq.explanation} onChange={e=>setMcq(v=>({...v,explanation:e.target.value}))}/></label>
+   <label className="block text-sm font-bold text-slate-700">Source label (optional)<input className={adminInput} value={mcq.sourceLabel} onChange={e=>setMcq(v=>({...v,sourceLabel:e.target.value}))} placeholder="Official source / report / article"/></label>
+   <button disabled={saving} className="rounded-xl bg-amber-400 px-5 py-3 text-sm font-extrabold text-slate-900 disabled:opacity-50">{saving?"Saving…":"Save "+(contentStatus==="published"?"and publish":"draft")}</button>
+  </form>}
+  {kind==="mains"&&<form onSubmit={saveContent} className="mt-5 space-y-4">
+   <label className="block text-sm font-bold text-slate-700">Mains question<textarea required minLength={10} maxLength={2400} rows={3} className={adminArea} value={mains.question} onChange={e=>setMains(v=>({...v,question:e.target.value}))}/></label>
+   <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+    <label className="block text-sm font-bold text-slate-700">Question type<select className={adminInput} value={mains.questionType} onChange={e=>setMains(v=>({...v,questionType:e.target.value as "pyq"|"practice"}))}><option value="practice">Practice</option><option value="pyq">Previous-year question</option></select></label>
+    {mains.questionType==="pyq"&&<label className="block text-sm font-bold text-slate-700">Year<input required type="number" min="1900" max="2027" className={adminInput} value={mains.year} onChange={e=>setMains(v=>({...v,year:e.target.value}))}/></label>}
+    <label className="block text-sm font-bold text-slate-700">GS paper<select required className={adminInput} value={mains.gsPaper} onChange={e=>setMains(v=>({...v,gsPaper:e.target.value}))}>{["GS I","GS II","GS III","GS IV","Essay","Optional","Other"].map(v=><option key={v} value={v}>{v}</option>)}</select></label>
+    <label className="block text-sm font-bold text-slate-700">Subject<select className={adminInput} value={mains.subjectId} onChange={e=>setMains(v=>({...v,subjectId:e.target.value}))}><option value="">Select subject (optional)</option>{subjects.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
+    <label className="block text-sm font-bold text-slate-700">Marks<input type="number" min="1" max="100" className={adminInput} value={mains.marks} onChange={e=>setMains(v=>({...v,marks:e.target.value}))}/></label>
+    <label className="block text-sm font-bold text-slate-700">Word limit<input type="number" min="20" max="3000" className={adminInput} value={mains.wordLimit} onChange={e=>setMains(v=>({...v,wordLimit:e.target.value}))}/></label>
+   </div>
+   <div className="grid gap-4 md:grid-cols-2"><label className="block text-sm font-bold text-slate-700">Question source URL (optional)<input type="url" className={adminInput} value={mains.sourceUrl} onChange={e=>setMains(v=>({...v,sourceUrl:e.target.value}))} placeholder="https://..."/></label><label className="block text-sm font-bold text-slate-700">Source label (optional)<input className={adminInput} value={mains.sourceLabel} onChange={e=>setMains(v=>({...v,sourceLabel:e.target.value}))} placeholder="UPSC question paper / practice"/></label></div>
+   <label className="block text-sm font-bold text-slate-700">Instructions (optional)<textarea rows={2} className={adminArea} value={mains.instruction} onChange={e=>setMains(v=>({...v,instruction:e.target.value}))}/></label>
+   <div className="rounded-xl border border-slate-200 p-4"><h3 className="font-extrabold text-[#0b1d3a]">Model answer <span className="font-normal text-slate-400">(optional)</span></h3><p className="mt-1 text-xs text-slate-500">If you add a model answer, fill in Introduction, Body and Conclusion. Add examples one per line.</p>
+    <div className="mt-4 space-y-4"><label className="block text-sm font-bold text-slate-700">Introduction<textarea rows={2} className={adminArea} value={mains.introduction} onChange={e=>setMains(v=>({...v,introduction:e.target.value}))}/></label><label className="block text-sm font-bold text-slate-700">Body<textarea rows={5} className={adminArea} value={mains.body} onChange={e=>setMains(v=>({...v,body:e.target.value}))} placeholder="Write the structured body of the model answer."/></label><label className="block text-sm font-bold text-slate-700">Examples <span className="font-normal text-slate-400">(one per line)</span><textarea rows={2} className={adminArea} value={mains.examples} onChange={e=>setMains(v=>({...v,examples:e.target.value}))}/></label><label className="block text-sm font-bold text-slate-700">Conclusion<textarea rows={2} className={adminArea} value={mains.conclusion} onChange={e=>setMains(v=>({...v,conclusion:e.target.value}))}/></label></div>
+   </div>
+   <button disabled={saving} className="rounded-xl bg-amber-400 px-5 py-3 text-sm font-extrabold text-slate-900 disabled:opacity-50">{saving?"Saving…":"Save "+(contentStatus==="published"?"and publish":"draft")}</button>
+  </form>}
+  {notice&&<p role="status" className={"mt-4 rounded-xl p-3 text-sm leading-6 "+(notice.kind==="success"?"bg-emerald-50 text-emerald-900":"bg-rose-50 text-rose-900")}>{notice.text}</p>}
+ </div>;
+}
+
 export default function HomePage(){
  const db=useMemo(()=>{const u=process.env.NEXT_PUBLIC_SUPABASE_URL,k=process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY||process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;return u&&k?createClient(u,k):null},[]);
  const [user,setUser]=useState<User|null>(null),[subjects,setSubjects]=useState(fallback),[affairs,setAffairs]=useState<Affair[]>([]),[affairFilter,setAffairFilter]=useState("all"),[pibMinistry,setPibMinistry]=useState("all"),[schemeJurisdiction,setSchemeJurisdiction]=useState("all"),[schemeMinistry,setSchemeMinistry]=useState("all"),[mcqs,setMcqs]=useState<Mcq[]>([]),[mains,setMains]=useState<Mains[]>([]),[loading,setLoading]=useState(true),[mobile,setMobile]=useState(false),[mode,setMode]=useState<"signin"|"signup">("signin"),[email,setEmail]=useState(""),[password,setPassword]=useState(""),[message,setMessage]=useState(""),[canResend,setCanResend]=useState(false),[choice,setChoice]=useState<Record<string,number>>({}),[show,setShow]=useState<Record<string,boolean>>({});
@@ -81,6 +254,19 @@ export default function HomePage(){
  async function signOut(){if(db)await db.auth.signOut();setUser(null)}
  const admin=user?.app_metadata?.role==="admin";
  const pibMinistries=useMemo(()=>Array.from(new Set([...indiaMinistries,...affairs.filter(a=>isPibAffair(a)&&a.ministry).map(a=>a.ministry as string)])).sort((a,b)=>a.localeCompare(b)),[affairs]);
+
+ async function refreshPublishedContent(): Promise<void> {
+  if(!db)return;
+  const [a,q,m]=await Promise.all([
+   db.from("current_affairs").select("id,title,summary,source_url,source_name,published_on,gs_paper,subject_id,content_type,scheme_jurisdiction,ministry,subjects(name,slug)").eq("status","published").order("published_on",{ascending:false}).limit(100),
+   db.from("mcq_questions").select("id,topic,question,options,explanation,source_url,source_label,subjects(name)").eq("status","published").limit(5),
+   db.from("mains_questions").select("id,question,year,question_type,gs_paper,marks,word_limit,source_url,source_label,model_answers(introduction,body,conclusion,examples)").eq("status","published").order("created_at",{ascending:false}).limit(5)
+  ]);
+  if(a.data)setAffairs(a.data as Affair[]);
+  if(q.data)setMcqs(q.data as unknown as Mcq[]);
+  if(m.data)setMains(m.data as unknown as Mains[]);
+ }
+
  const filteredAffairs=useMemo(()=>affairs.filter(a=>{
   if(affairFilter==="pib")return isPibAffair(a)&&(pibMinistry==="all"||a.ministry===pibMinistry);
   if(affairFilter==="schemes"){
@@ -93,7 +279,7 @@ export default function HomePage(){
  }),[affairs,affairFilter,pibMinistry,schemeJurisdiction,schemeMinistry]);
  const empty=(title:string,desc:string)=><div className="rounded-2xl border border-dashed border-slate-300 bg-white p-7"><h3 className="font-extrabold text-[#0b1d3a]">{title}</h3><p className="mt-2 text-sm leading-6 text-slate-500">{desc}</p></div>;
  return <main className="min-h-screen bg-slate-50 text-slate-800">
- <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur"><div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 sm:px-6"><a href="#home" className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl bg-[#0b1d3a] text-white"><BookOpen size={21}/></span><span><strong className="block text-lg font-black text-[#0b1d3a]">CutoffClub</strong><small className="block text-[10px] font-bold uppercase tracking-[.18em] text-slate-500">Prepare with purpose</small></span></a><nav className="hidden gap-1 lg:flex">{[["#affairs","Current affairs"],["#prelims","Prelims MCQs"],["#mains","Mains practice"],["#subjects","Subjects"],["#account","Account"]].map(([h,l])=><a key={h} href={h} className="rounded-lg px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100">{l}</a>)}</nav><div className="flex items-center gap-2">{user?<><span className="hidden max-w-36 truncate text-xs text-slate-500 sm:inline">{user.email}</span><button className="rounded-lg border px-3 py-2 text-xs font-bold" onClick={()=>void signOut()}>Sign out</button></>:<a href="#account" className="hidden rounded-lg bg-[#0b1d3a] px-4 py-2 text-sm font-bold text-white sm:inline-flex"><LogIn size={14} className="mr-2"/>Sign in</a>}<button className="rounded-lg border p-2 lg:hidden" onClick={()=>setMobile(v=>!v)} aria-label="Toggle navigation">{mobile?<X size={18}/>:<Menu size={18}/>}</button></div></div>{mobile&&<nav className="grid gap-1 border-t p-3 lg:hidden">{[["#affairs","Current affairs"],["#prelims","Prelims MCQs"],["#mains","Mains practice"],["#subjects","Subjects"],["#account","Account"]].map(([h,l])=><a key={h} href={h} onClick={()=>setMobile(false)} className="rounded-lg px-3 py-2 text-sm font-semibold">{l}</a>)}</nav>}</header>
+ <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur"><div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 sm:px-6"><a href="#home" className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl bg-[#0b1d3a] text-white"><BookOpen size={21}/></span><span><strong className="block text-lg font-black text-[#0b1d3a]">CutoffClub</strong><small className="block text-[10px] font-bold uppercase tracking-[.18em] text-slate-500">Prepare with purpose</small></span></a><nav className="hidden gap-1 lg:flex">{[["#affairs","Current affairs"],["#prelims","Prelims MCQs"],["#mains","Mains practice"],["#subjects","Subjects"],["#account","Account"]].map(([h,l])=><a key={h} href={h} className="rounded-lg px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100">{l}</a>)}{admin&&<a href="#admin" className="rounded-lg px-3 py-2 text-sm font-semibold text-amber-700 hover:bg-amber-50">Admin studio</a>}</nav><div className="flex items-center gap-2">{user?<><span className="hidden max-w-36 truncate text-xs text-slate-500 sm:inline">{user.email}</span><button className="rounded-lg border px-3 py-2 text-xs font-bold" onClick={()=>void signOut()}>Sign out</button></>:<a href="#account" className="hidden rounded-lg bg-[#0b1d3a] px-4 py-2 text-sm font-bold text-white sm:inline-flex"><LogIn size={14} className="mr-2"/>Sign in</a>}<button className="rounded-lg border p-2 lg:hidden" onClick={()=>setMobile(v=>!v)} aria-label="Toggle navigation">{mobile?<X size={18}/>:<Menu size={18}/>}</button></div></div>{mobile&&<nav className="grid gap-1 border-t p-3 lg:hidden">{[["#affairs","Current affairs"],["#prelims","Prelims MCQs"],["#mains","Mains practice"],["#subjects","Subjects"],["#account","Account"]].map(([h,l])=><a key={h} href={h} onClick={()=>setMobile(false)} className="rounded-lg px-3 py-2 text-sm font-semibold">{l}</a>)}{admin&&<a href="#admin" onClick={()=>setMobile(false)} className="rounded-lg px-3 py-2 text-sm font-semibold text-amber-700 hover:bg-amber-50">Admin studio</a>}</nav>}</header>
  <section id="home" className="relative overflow-hidden bg-[#0b1d3a] text-white"><div className="mx-auto grid max-w-7xl gap-10 px-5 py-14 sm:px-8 sm:py-20 lg:grid-cols-[1.15fr_.85fr] lg:items-center"><div><div className="inline-flex items-center gap-2 rounded-full border border-amber-200/30 bg-white/5 px-3 py-1.5 text-xs font-extrabold uppercase tracking-wider text-amber-200"><Sparkles size={14}/> Exam-oriented learning</div><h1 className="mt-5 text-4xl font-black leading-tight tracking-tight sm:text-5xl lg:text-6xl">Prepare with purpose.<br/><span className="text-amber-400">Practice with clarity.</span></h1><p className="mt-5 max-w-2xl text-base leading-7 text-slate-300">Verified current affairs, focused Prelims practice and structured Mains writing — organised by subject, without content overload.</p><div className="mt-7 flex flex-wrap gap-3"><a href="#affairs" className="inline-flex items-center rounded-xl bg-amber-400 px-5 py-3 font-extrabold text-slate-900">Start learning <ArrowRight size={16} className="ml-2"/></a><a href="#subjects" className="rounded-xl border border-white/20 px-5 py-3 font-bold">Browse subjects</a></div></div><div className="grid grid-cols-2 gap-3">{[{i:Compass,t:"Current affairs",n:affairs.length},{i:CheckCircle2,t:"Prelims MCQs",n:mcqs.length},{i:FileText,t:"Mains questions",n:mains.length},{i:GraduationCap,t:"Subjects",n:subjects.length}].map(x=><div key={x.t} className="rounded-2xl border border-white/10 bg-white/[.06] p-5"><x.i size={20} className="text-amber-300"/><p className="mt-4 text-3xl font-black">{loading?"—":String(x.n).padStart(2,"0")}</p><p className="mt-1 text-sm font-bold">{x.t}</p><p className="mt-1 text-xs text-slate-400">Published content</p></div>)}</div></div></section>
  <section className="mx-auto grid max-w-7xl gap-3 px-5 py-9 sm:grid-cols-2 sm:px-8 lg:grid-cols-4">{[{h:"#affairs",t:"Daily current affairs",d:"Context, key facts and cited sources",i:Compass},{h:"#prelims",t:"Prelims practice",d:"Questions and explanations",i:CheckCircle2},{h:"#mains",t:"Mains writing",d:"Practice prompts and model answers",i:FileText},{h:"#subjects",t:"Subject dashboard",d:"Browse by General Studies paper",i:GraduationCap}].map(x=><a key={x.t} href={x.h} className="flex gap-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm hover:border-amber-300"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-amber-50 text-amber-700"><x.i size={20}/></span><span><b className="text-sm text-[#0b1d3a]">{x.t}</b><span className="mt-1 block text-xs leading-5 text-slate-500">{x.d}</span></span></a>)}</section>
  <section id="affairs" className="mx-auto max-w-7xl scroll-mt-24 px-5 py-7 sm:px-8">
@@ -148,6 +334,7 @@ export default function HomePage(){
  <section id="prelims" className="mx-auto max-w-7xl scroll-mt-24 px-5 py-7 sm:px-8"><h2 className="text-2xl font-black text-[#0b1d3a]">Prelims MCQs</h2><p className="mb-5 mt-2 text-sm text-slate-500">Choose an option to reveal the explanation. Quiz answer keys are protected separately.</p>{mcqs.length?<div className="grid gap-4 lg:grid-cols-2">{mcqs.map((q,i)=><article key={q.id} className="rounded-2xl border bg-white p-6"><div className="flex justify-between gap-3 text-xs font-bold text-amber-700"><span>Question {i+1}</span><span className="text-slate-500">{q.subjects?.name||q.topic}</span></div><h3 className="mt-4 font-extrabold leading-6 text-[#0b1d3a]">{q.question}</h3><div className="mt-4 space-y-2">{q.options.map((o,n)=><button key={n} onClick={()=>{setChoice(p=>({...p,[q.id]:n}));setShow(p=>({...p,[q.id]:false}))}} className={`block w-full rounded-xl border px-3 py-3 text-left text-sm ${choice[q.id]===n?"border-amber-400 bg-amber-50":"border-slate-200 hover:bg-slate-50"}`}><b className="mr-2">{String.fromCharCode(65+n)}.</b>{o}</button>)}</div><button disabled={choice[q.id]===undefined} onClick={()=>setShow(p=>({...p,[q.id]:true}))} className="mt-4 rounded-lg bg-[#0b1d3a] px-4 py-2 text-xs font-extrabold text-white disabled:opacity-40">Show explanation</button>{show[q.id]&&<div className="mt-4 rounded-xl bg-emerald-50 p-4 text-sm leading-6 text-emerald-900"><b>Explanation</b><p>{q.explanation}</p>{q.source_url&&<a className="underline" target="_blank" rel="noreferrer" href={q.source_url}>{q.source_label||"Source"}</a>}</div>}</article>)}</div>:empty(loading?"Loading questions…":"No published MCQs available","Published questions will appear once verified items are added to the question bank.")}</section>
  <section id="mains" className="mx-auto max-w-7xl scroll-mt-24 px-5 py-7 sm:px-8"><h2 className="text-2xl font-black text-[#0b1d3a]">Mains questions & model answers</h2><p className="mb-5 mt-2 text-sm text-slate-500">A question is labelled as a PYQ only when the year and a traceable source are supplied.</p>{mains.length?<div className="space-y-4">{mains.map(q=><article key={q.id} className="rounded-2xl border bg-white p-6"><div className="flex flex-wrap gap-2 text-[10px] font-extrabold"><span className="rounded bg-slate-100 px-2 py-1">{q.question_type==="pyq"?"UPSC PYQ · "+q.year:"Practice question"}</span><span className="rounded bg-blue-50 px-2 py-1 text-blue-800">{q.gs_paper}</span>{q.marks&&<span className="rounded bg-amber-50 px-2 py-1 text-amber-800">{q.marks} marks</span>}</div><h3 className="mt-4 font-extrabold leading-7 text-[#0b1d3a]">{q.question}</h3><p className="mt-2 text-xs text-slate-500">{q.word_limit? q.word_limit+" words · ":""}{q.source_label||"Exam-oriented practice"}</p>{q.source_url&&<a className="mt-2 inline-block text-xs font-bold text-amber-700 underline" target="_blank" rel="noreferrer" href={q.source_url}>Question source</a>}{q.model_answers?.length?<details className="mt-4 rounded-xl bg-slate-50 p-4"><summary className="cursor-pointer text-sm font-extrabold text-[#0b1d3a]">Read model answer</summary><div className="mt-3 space-y-3 text-sm leading-6 text-slate-600"><p>{q.model_answers[0].introduction}</p><p>{typeof q.model_answers[0].body==="string"?q.model_answers[0].body:JSON.stringify(q.model_answers[0].body)}</p><p>{q.model_answers[0].conclusion}</p></div></details>:<p className="mt-3 text-xs text-slate-500">No model answer published yet.</p>}</article>)}</div>:empty(loading?"Loading Mains questions…":"No Mains prompts published yet","Practice prompts and source-verified previous-year questions will appear here when published.")}</section>
  <section id="subjects" className="mx-auto max-w-7xl scroll-mt-24 px-5 py-7 sm:px-8"><h2 className="text-2xl font-black text-[#0b1d3a]">Subject-wise dashboard</h2><p className="mb-5 mt-2 text-sm text-slate-500">Ten subject buckets aligned with the General Studies syllabus.</p><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{subjects.map(s=><article key={s.id} className="rounded-2xl border border-slate-200 bg-white p-5"><div className="flex justify-between"><GraduationCap size={20} className="text-[#0b1d3a]"/></div><h3 className="mt-3 font-extrabold text-[#0b1d3a]">{s.name}</h3><p className="mt-1 text-xs leading-5 text-slate-500">{s.description}</p></article>)}</div></section>
+ {admin&&db&&user&&<section id="admin" className="mx-auto max-w-7xl scroll-mt-24 px-5 py-7 sm:px-8"><div className="mb-5"><p className="text-xs font-extrabold uppercase tracking-wider text-amber-700">Admin only</p><h2 className="mt-2 text-2xl font-black text-[#0b1d3a]">Content studio</h2><p className="mt-2 text-sm text-slate-500">Create drafts or publish exam-oriented current affairs, PIB releases, schemes, MCQs with protected answer keys, and Mains questions with model answers.</p></div><AdminContentManager db={db} user={user} subjects={subjects} onSaved={refreshPublishedContent}/></section>}
  <section id="account" className="mx-auto max-w-7xl scroll-mt-24 px-5 py-10 sm:px-8"><div className="grid gap-7 rounded-3xl border border-slate-200 bg-white p-6 sm:grid-cols-2 sm:p-9"><div><p className="text-xs font-extrabold uppercase tracking-wider text-amber-700">Your workspace</p><h2 className="mt-2 text-2xl font-black text-[#0b1d3a]">{user?"Welcome back":"Sign in or create an account"}</h2><p className="mt-3 text-sm leading-6 text-slate-500">Learner access is governed by Supabase authentication and row-level security. Admin roles must be granted through trusted server-side metadata.</p>{user&&<p className="mt-4 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-900"><CheckCircle2 size={15} className="mr-2 inline"/> Signed in as {user.email}</p>}{admin&&<p id="admin" className="mt-3 rounded-xl bg-blue-50 p-3 text-sm text-blue-900"><ShieldCheck size={15} className="mr-2 inline"/> Admin role recognised.</p>}</div>{user?<button className="self-start rounded-xl border px-4 py-3 text-sm font-bold" onClick={()=>void signOut()}>Sign out</button>:<form onSubmit={auth} className="space-y-3"><div className="flex gap-2"><button type="button" onClick={()=>setMode("signin")} className={`rounded-lg px-4 py-2 text-sm font-bold ${mode==="signin"?"bg-[#0b1d3a] text-white":"bg-slate-100"}`}>Sign in</button><button type="button" onClick={()=>setMode("signup")} className={`rounded-lg px-4 py-2 text-sm font-bold ${mode==="signup"?"bg-[#0b1d3a] text-white":"bg-slate-100"}`}>Create account</button></div><label className="block text-sm font-bold">Email<input required type="email" value={email} onChange={e=>setEmail(e.target.value)} autoComplete="email" className="mt-1 block w-full rounded-xl border px-4 py-3 font-normal"/></label><label className="block text-sm font-bold">Password<input required minLength={8} type="password" value={password} onChange={e=>setPassword(e.target.value)} autoComplete={mode==="signin"?"current-password":"new-password"} className="mt-1 block w-full rounded-xl border px-4 py-3 font-normal"/></label><button className="w-full rounded-xl bg-amber-400 px-4 py-3 text-sm font-extrabold text-slate-900">{mode==="signin"?"Sign in":"Create account"}</button>{message&&<p className="text-sm text-slate-600" role="status">{message}</p>}{canResend&&mode==="signup"&&<button type="button" onClick={()=>void resendConfirmation()} className="text-sm font-bold text-amber-700 underline">Resend confirmation email</button>}</form>}</div></section>
  <footer className="mt-8 border-t border-slate-200 bg-white"><div className="mx-auto flex max-w-7xl flex-wrap justify-between gap-3 px-5 py-7 text-xs text-slate-500 sm:px-8"><span><b className="text-[#0b1d3a]">CutoffClub</b> · Learn · Practise · Improve</span><a href="#home" className="font-bold text-amber-700">Back to top ↑</a></div></footer></main>;
 }
