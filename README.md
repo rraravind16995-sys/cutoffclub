@@ -30,6 +30,9 @@ Supabase project ref: `xhqvtyxrtqvqckqtzlll` in Mumbai (`ap-south-1`). The produ
 ## Content integrity
 Current-affairs items should include traceable sources. Label a Mains question as an actual UPSC PYQ only when its year and source can be verified; otherwise label it as practice.
 
+## Production deployment
+The intended production URL is https://cutoffclub.vercel.app, with `main` as the deployment branch. After connecting this repository to the existing Vercel project, pushes to `main` should trigger a production deployment. Verify a deployment's details show this GitHub repository and branch, then confirm the production domain points to that deployment.
+
 ## Security and launch checklist
 Configure Supabase Auth site and redirect URLs for the production domain. Grant admin access only through a trusted server-side workflow setting `app_metadata.role = "admin"`; never trust client-editable metadata. Test auth flows, RLS data isolation, quiz scoring, admin permissions and mobile accessibility before inviting learners.
 
