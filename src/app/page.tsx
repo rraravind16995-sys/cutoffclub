@@ -126,7 +126,7 @@ export default function HomePage(){
      </label>
      <label htmlFor="scheme-ministry-filter" className="block text-xs font-extrabold uppercase tracking-wide text-slate-600">Ministry / Department
       <select id="scheme-ministry-filter" disabled={schemeJurisdiction==="all"} value={schemeMinistry} onChange={e=>setSchemeMinistry(e.target.value)} className="mt-2 block w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-semibold normal-case tracking-normal text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400">
-       <option value="all">{schemeJurisdiction==="india"?"All ministries":"All departments"}</option>
+       <option value="all">All ministries</option>
        {(schemeJurisdiction==="india"?indiaMinistries:schemeJurisdiction==="tamil_nadu"?tamilNaduDepartments:[]).map(name=><option key={name} value={name}>{name}</option>)}
       </select>
      </label>
