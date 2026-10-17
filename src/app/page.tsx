@@ -88,7 +88,7 @@ export default function HomePage(){
   <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
     <label htmlFor="affair-subject-filter" className="block text-xs font-extrabold uppercase tracking-wide text-slate-600">Subject-wise
-     <select id="affair-subject-filter" value={affairFilter} onChange={e=>{setAffairFilter(e.target.value);setSchemeJurisdiction("all");setSchemeMinistry("all")}} className="mt-2 block w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-semibold normal-case tracking-normal text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100">
+     <select id="affair-subject-filter" value={affairFilter} onChange={e=>{setAffairFilter(e.target.value);setSchemeJurisdiction("india");setSchemeMinistry("all")}} className="mt-2 block w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-semibold normal-case tracking-normal text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100">
       <option value="all">All current affairs</option>
       {subjects.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
       <option value="pib">PIB (Press Information Bureau)</option>
@@ -98,9 +98,8 @@ export default function HomePage(){
     {affairFilter==="schemes"?<>
      <label htmlFor="scheme-jurisdiction-filter" className="block text-xs font-extrabold uppercase tracking-wide text-slate-600">Government
       <select id="scheme-jurisdiction-filter" value={schemeJurisdiction} onChange={e=>{setSchemeJurisdiction(e.target.value);setSchemeMinistry("all")}} className="mt-2 block w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-semibold normal-case tracking-normal text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100">
-       <option value="all">India or Tamil Nadu</option>
-       <option value="india">India — Union Government</option>
-       <option value="tamil_nadu">Tamil Nadu Government</option>
+       <option value="india">India</option>
+       <option value="tamil_nadu">Tamil Nadu</option>
       </select>
      </label>
      <label htmlFor="scheme-ministry-filter" className="block text-xs font-extrabold uppercase tracking-wide text-slate-600">Ministry / Department
