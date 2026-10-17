@@ -3,7 +3,7 @@ import {useEffect,useMemo,useState} from "react";
 import {createClient,type User} from "@supabase/supabase-js";
 import {ArrowRight,BookOpen,CheckCircle2,Compass,FileText,GraduationCap,LogIn,Menu,ShieldCheck,Sparkles,X} from "lucide-react";
 type Subject={id:string;name:string;slug:string;description:string|null;gs_papers:string[]};
-type Affair={id:string;title:string;summary:string;source_url:string;source_name:string;published_on:string;gs_paper:string|null;subject_id:string|null;subjects?:{name:string;slug:string}|null;content_type:"current_affair"|"scheme";scheme_jurisdiction:"india"|"tamil_nadu"|null;ministry:string|null};
+type Affair={id:string;title:string;summary:string;source_url:string;source_name:string;published_on:string;gs_paper:string|null;subject_id:string|null;subjects?:{name:string;slug:string}[]|null;content_type:"current_affair"|"scheme";scheme_jurisdiction:"india"|"tamil_nadu"|null;ministry:string|null};
 type Mcq={id:string;topic:string;question:string;options:string[];explanation:string;source_url:string|null;source_label:string|null;subjects?:{name:string}|null};
 type Mains={id:string;question:string;year:number|null;question_type:"pyq"|"practice";gs_paper:string;marks:number|null;word_limit:number|null;source_url:string|null;source_label:string|null;model_answers?:{introduction:string;body:unknown;conclusion:string;examples:string[]}[]};
 const fallback:Subject[]=[["Polity & Governance","Constitution, Parliament and governance","GS II"],["History & Culture","Indian history and heritage","GS I"],["Geography","Physical and Indian geography","GS I"],["Economy","Growth, inflation and inclusive development","GS III"],["Environment","Ecology, biodiversity and climate","GS III"],["Science & Technology","Research, space, health and technology","GS III"],["International Relations","India’s bilateral ties and global institutions","GS II"],["Ethics & Integrity","Ethics, attitude and case studies","GS IV"],["Security & Disaster Management","Internal security and resilience","GS III"],["Society & Social Justice","Welfare, inclusion and social issues","GS I / II"]].map((x,i)=>({id:String(i),slug:String(i),name:x[0],description:x[1],gs_papers:[x[2]]}));
@@ -75,7 +75,7 @@ export default function HomePage(){
    if(schemeMinistry!=="all"&&a.ministry!==schemeMinistry)return false;
    return true;
   }
-  return affairFilter==="all"||a.subject_id===affairFilter||a.subjects?.slug===affairFilter;
+  return affairFilter==="all"||a.subject_id===affairFilter||a.subjects?.[0]?.slug===affairFilter;
  }),[affairs,affairFilter,schemeJurisdiction,schemeMinistry]);
  const empty=(title:string,desc:string)=><div className="rounded-2xl border border-dashed border-slate-300 bg-white p-7"><h3 className="font-extrabold text-[#0b1d3a]">{title}</h3><p className="mt-2 text-sm leading-6 text-slate-500">{desc}</p></div>;
  return <main className="min-h-screen bg-slate-50 text-slate-800">
@@ -115,7 +115,7 @@ export default function HomePage(){
   {filteredAffairs.length?<div className="grid gap-4 md:grid-cols-2">{filteredAffairs.map(a=><article key={a.id} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
    <div className="flex flex-wrap gap-2 text-[10px] font-extrabold uppercase text-amber-800">
     <span className="rounded bg-amber-50 px-2 py-1">{a.gs_paper||"Current affairs"}</span>
-    <span className="rounded bg-blue-50 px-2 py-1 text-blue-800">{a.content_type==="scheme"?"Schemes":a.subjects?.name||"Current affairs"}</span>
+    <span className="rounded bg-blue-50 px-2 py-1 text-blue-800">{a.content_type==="scheme"?"Schemes":a.subjects?.[0]?.name||"Current affairs"}</span>
     {a.content_type==="scheme"&&<span className="rounded bg-violet-50 px-2 py-1 text-violet-800">{a.scheme_jurisdiction==="india"?"India":"Tamil Nadu"}{a.ministry ? " · " + a.ministry : ""}</span>}
     <span className="rounded bg-slate-100 px-2 py-1">{a.published_on}</span>
    </div>
