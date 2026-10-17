@@ -47,3 +47,7 @@ The production app uses `NEXT_PUBLIC_SITE_URL=https://cutoffclub.vercel.app` for
 3. Configure Custom SMTP in Authentication settings before inviting general users. Supabase's default sender is restricted to addresses belonging to the project's organization and is rate-limited; without custom SMTP, confirmation emails may not reach learners.
 
 The app shows a confirmation reminder after signup, supports resending the confirmation message, reports auth-link errors, and redirects signup confirmation to the canonical production URL. Never commit SMTP credentials or Supabase secret/service-role keys.
+
+
+## Current-affairs filters
+The Current Affairs section supports subject filtering, PIB-sourced releases, and schemes grouped by government and ministry/department. Use `content_type = 'scheme'`, `scheme_jurisdiction = 'india'` or `'tamil_nadu'`, and set `ministry` to the exact matching option label in the UI. For ordinary current-affairs records, keep `content_type = 'current_affair'` and leave the scheme metadata columns null. PIB releases are filtered by `source_name` containing “PIB” or a source URL on `pib.gov.in`. The list uses the optional subject relation to `public.subjects`.
